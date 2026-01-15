@@ -1,0 +1,43 @@
+name: Daily Publish
+on:
+  schedule:
+      # النشر كل ساعة من 12 ظهراً إلى 9 مساءً (بتوقيت دمشق UTC+3)
+          # نطرح 3 ساعات من التوقيت المحلي للحصول على UTC
+              # 12 ظهراً دمشق = 9 صباحاً UTC
+                  # 9 مساءً دمشق = 6 مساءً UTC
+                      - cron: '0 7,8,9,10,11,12,13,14,15,16,17,18,19,20 * * *'
+                        workflow_dispatch: # تشغيل يدوي
+                        jobs:
+                          publish:
+                              runs-on: ubuntu-latest
+                                  permissions:
+                                        contents: write
+                                            steps:
+                                                  - uses: actions/checkout@v3
+
+                                                              - name: Set up Python
+                                                                      uses: actions/setup-python@v4
+                                                                              with:
+                                                                                        python-version: '3.9'
+
+                                                                                                        - name: Install dependencies
+                                                                                                                run: |
+                                                                                                                          pip install requests beautifulsoup4 pyTelegramBotAPI pytz
+                                                                                                                                    
+                                                                                                                                          - name: Run Bot
+                                                                                                                                                  env:
+                                                                                                                                                            TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+                                                                                                                                                                      FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+                                                                                                                                                                                FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+                                                                                                                                                                                          FB_GROUP_ID: ${{ secrets.FB_GROUP_ID }}
+                                                                                                                                                                                                  run: python telegram_bot.py
+                                                                                                                                                                                                          
+                                                                                                                                                                                                                - name: Update Log
+                                                                                                                                                                                                                        run: |
+                                                                                                                                                                                                                                  echo "Update $(date)" >> log.txt
+                                                                                                                                                                                                                                            git config user.name github-actions
+                                                                                                                                                                                                                                                      git config user.email github-actions@github.com
+                                                                                                                                                                                                                                                                git add .
+                                                                                                                                                                                                                                                                          git commit -m "Daily update and bot run" || echo "No changes to commit"
+                                                                                                                                                                                                                                                                                    git push
+                                                                                                                                                                                                                                                                                    
