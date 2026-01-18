@@ -7,162 +7,195 @@ from telegram import Bot
 from datetime import datetime
 import re
 
-# إعداد السجلات
+# إعداد السجلات بشكل احترافي
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# الإعدادات
+# الإعدادات الأساسية
 TOKEN = "7990500630:AAGtX2lQz2VU3KWtGlP4_hzrZcaMATo-At8"
 CHANNEL_ID = "@FarawlaShop"
 URL = "https://sp-today.com/"
 
-# ذاكرة لتخزين آخر الأسعار المنشورة لتجنب التكرار
+# قاموس أسماء الدول والعملات (لإزالة الرموز تماماً)
+CURRENCY_NAMES = {
+    'USD': 'الدولار الأمريكي',
+    'EUR': 'اليورو الأوروبي',
+    'TRY': 'الليرة التركية',
+    'SAR': 'الريال السعودي',
+    'AED': 'الدرهم الإماراتي',
+    'EGP': 'الجنيه المصري',
+    'GBP': 'الجنيه الإسترليني',
+    'JOD': 'الدينار الأردني',
+    'KWD': 'الدينار الكويتي',
+    'QAR': 'الريال القطري',
+    'BHD': 'الدينار البحريني',
+    'OMR': 'الريال العماني',
+    'LYD': 'الدينار الليبي',
+    'IQD': 'الدينار العراقي',
+    'CAD': 'الدولار الكندي',
+    'AUD': 'الدولار الأسترالي',
+    'CHF': 'الفرنك السويسري',
+    'SEK': 'الكرونة السويدية',
+    'NOK': 'الكرونة النرويجية',
+    'DKK': 'الكرونة الدنماركية',
+    'RUB': 'الروبل الروسي',
+    'DZD': 'الدينار الجزائري',
+    'MAD': 'الدرهم المغربي',
+    'TND': 'الدينار التونسي',
+    'MYR': 'الرينغيت الماليزي',
+    'NZD': 'الدولار النيوزيلندي',
+    'ZAR': 'الراند الجنوب أفريقي',
+    'IRR': 'الريال الإيراني',
+    'SGD': 'الدولار السنغافوري',
+    'BRL': 'الريال البرازيلي'
+}
+
+# ذاكرة لتخزين آخر الأسعار المنشورة
 last_prices = {}
 
+def clean_number(text):
+    """تنظيف الأرقام من الفواصل والرموز"""
+    try:
+        return float(re.sub(r'[^\d.]', '', text.replace(',', '')))
+    except:
+        return 0.0
+
 def get_data():
+    """جلب البيانات من الموقع وتنظيمها في هيكل بيانات ثابت"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        response = requests.get(URL, headers=headers, timeout=15)
+        response = requests.get(URL, headers=headers, timeout=20)
         soup = BeautifulSoup(response.content, 'html.parser')
         
         data = {
-            'currencies': [],
+            'main_currencies': [],
+            'other_currencies': [],
             'gold': {},
             'fuel': {},
             'timestamp': datetime.now().strftime("%Y-%m-%d | %I:%M %p")
         }
 
-        # استخراج العملات
+        # 1. استخراج العملات
         currency_elements = soup.find_all('a', href=re.compile(r'/currency/'))
+        usd_sell = 12020.0 # قيمة افتراضية في حال الفشل
+        
         for el in currency_elements:
             text = el.get_text(separator=' ', strip=True)
             parts = text.split()
             if len(parts) >= 4:
-                code = parts[0]
-                prices = [p.replace(',', '') for p in parts if re.match(r'^\d{1,3}(,\d{3})*$', p)]
-                if len(prices) >= 2:
-                    data['currencies'].append({
-                        'code': code,
-                        'buy': prices[0],
-                        'sell': prices[1]
-                    })
+                code = parts[0].upper()
+                if code in CURRENCY_NAMES:
+                    # البحث عن أول رقمين يمثلان الشراء والمبيع
+                    prices = [p for p in parts if re.match(r'^\d{1,3}(,\d{3})*(\.\d+)?$', p)]
+                    if len(prices) >= 2:
+                        buy = clean_number(prices[0])
+                        sell = clean_number(prices[1])
+                        
+                        item = {
+                            'name': CURRENCY_NAMES[code],
+                            'code': code,
+                            'buy': buy,
+                            'sell': sell
+                        }
+                        
+                        if code == 'USD': usd_sell = sell
+                        
+                        if code in ['USD', 'EUR', 'TRY', 'SAR', 'AED', 'EGP']:
+                            data['main_currencies'].append(item)
+                        else:
+                            data['other_currencies'].append(item)
 
-        # استخراج الذهب
+        # 2. استخراج الذهب
         gold_links = soup.find_all('a', href=re.compile(r'/gold'))
         for link in gold_links:
             text = link.get_text(separator=' ', strip=True)
-            if '21K' in text:
-                nums = re.findall(r'[\d,.]+', text)
-                if len(nums) >= 5:
-                    data['gold']['21'] = {'usd': nums[2], 'syp': nums[3].replace(',', '')}
-            elif '18K' in text:
-                nums = re.findall(r'[\d,.]+', text)
-                if len(nums) >= 5:
-                    data['gold']['18'] = {'usd': nums[2], 'syp': nums[3].replace(',', '')}
+            nums = re.findall(r'[\d,.]+', text)
+            if '21K' in text and len(nums) >= 5:
+                data['gold']['21'] = {'usd': nums[2], 'syp': clean_number(nums[3])}
+            elif '18K' in text and len(nums) >= 5:
+                data['gold']['18'] = {'usd': nums[2], 'syp': clean_number(nums[3])}
             elif 'أونصة' in text:
                 match = re.search(r'\$([\d,.]+)', text)
                 if match: data['gold']['ounce'] = match.group(1)
 
-        # استخراج المحروقات - تحسين البحث
+        # 3. استخراج المحروقات
         energy_links = soup.find_all('a', href=re.compile(r'/energy'))
         for link in energy_links:
             text = link.get_text(separator=' ', strip=True)
             price_match = re.search(r'\$([\d.]+)', text)
             if price_match:
-                price = price_match.group(1)
-                if 'بنزين' in text: data['fuel']['gasoline'] = price
-                elif 'مازوت' in text: data['fuel']['diesel'] = price
-                elif 'غاز' in text: data['fuel']['gas'] = price
+                price_usd = float(price_match.group(1))
+                if 'بنزين' in text: data['fuel']['بنزين'] = price_usd
+                elif 'مازوت' in text: data['fuel']['مازوت'] = price_usd
+                elif 'غاز' in text: data['fuel']['غاز'] = price_usd
 
+        # إضافة سعر الدولار للمحروقات والعملات الأخرى
+        data['usd_sell'] = usd_sell
         return data
     except Exception as e:
-        logger.error(f"Error fetching data: {e}")
+        logger.error(f"Error in get_data: {e}")
         return None
 
 def format_message(data):
-    usd_sell = 12020
-    for c in data['currencies']:
-        if c['code'] == 'USD':
-            usd_sell = float(c['sell'])
-            break
-
+    """تنسيق الرسالة النهائية بناءً على البيانات المنظمة"""
+    usd_sell = data['usd_sell']
+    
     msg = f"🇸🇾 نشرة أسعار الصرف والذهب في سوريا 🇸🇾\n"
     msg += f"⏰ {data['timestamp']} (توقيت دمشق)\n\n"
     
+    # العملات الرئيسية
     msg += f"💰 أسعار العملات (شراء | مبيع):\n"
     msg += f"━━━━━━━━━━━━━━━━━━\n"
-    
-    main_currencies = {
-        'USD': 'الدولار الأمريكي', 'EUR': 'اليورو', 'TRY': 'الليرة التركية',
-        'SAR': 'الريال السعودي', 'AED': 'الدرهم الإماراتي', 'EGP': 'الجنيه المصري'
-    }
-    
-    added_codes = set()
-    for c in data['currencies']:
-        if c['code'] in main_currencies and c['code'] not in added_codes:
-            buy_old = int(c['buy'])
-            sell_old = int(c['sell'])
-            msg += f"🔹 {main_currencies[c['code']]}:\n"
-            msg += f"  - ليرة قديمة: {buy_old:,} | {sell_old:,}\n"
-            msg += f"  - ليرة جديدة: {buy_old/100:,.2f} | {sell_old/100:,.2f} ✨\n"
-            added_codes.add(c['code'])
+    for c in data['main_currencies']:
+        msg += f"🔹 {c['name']}:\n"
+        msg += f"  - ليرة قديمة: {int(c['buy']):,} | {int(c['sell']):,}\n"
+        msg += f"  - ليرة جديدة: {c['buy']/100:,.2f} | {c['sell']/100:,.2f} ✨\n"
 
-    msg += f"\n🌍 بقية العملات:\n"
-    msg += f"━━━━━━━━━━━━━━━━━━\n"
-    
-    other_currencies = {
-        'LYD': 'ليبيا', 'JOD': 'الأردن', 'KWD': 'الكويت', 'GBP': 'بريطانيا',
-        'QAR': 'قطر', 'BHD': 'البحرين', 'SEK': 'السويد', 'CAD': 'كندا',
-        'OMR': 'عمان', 'NOK': 'النرويج', 'DKK': 'الدنمارك', 'DZD': 'الجزائر',
-        'MAD': 'المغرب', 'TND': 'تونس', 'RUB': 'روسيا', 'MYR': 'ماليزيا',
-        'BRL': 'البرازيل', 'NZD': 'نيوزيلندا', 'CHF': 'سويسرا', 'AUD': 'أستراليا',
-        'ZAR': 'جنوب أفريقيا', 'IQD': 'العراق', 'IRR': 'إيران', 'SGD': 'سنغافورة'
-    }
+    # بقية العملات
+    if data['other_currencies']:
+        msg += f"\n🌍 بقية العملات:\n"
+        msg += f"━━━━━━━━━━━━━━━━━━\n"
+        for c in data['other_currencies']:
+            msg += f"🔸 {c['name']}:\n"
+            msg += f"  - ليرة قديمة: {int(c['buy']):,} | {int(c['sell']):,}\n"
+            msg += f"  - ليرة جديدة: {c['buy']/100:,.2f} | {c['sell']/100:,.2f}\n"
+            msg += f"  - سعر دولار: {(c['buy']/usd_sell):,.2f} $\n"
 
-    for c in data['currencies']:
-        if c['code'] in other_currencies and c['code'] not in added_codes:
-            buy_old = int(c['buy'])
-            sell_old = int(c['sell'])
-            msg += f"🔸 {other_currencies[c['code']]}:\n"
-            msg += f"  - ليرة قديمة: {buy_old:,} | {sell_old:,}\n"
-            msg += f"  - ليرة جديدة: {buy_old/100:,.2f} | {sell_old/100:,.2f}\n"
-            msg += f"  - سعر دولار: {(buy_old/usd_sell):,.2f} $\n"
-            added_codes.add(c['code'])
-
+    # الذهب
     msg += f"\n✨ أسعار الذهب:\n"
     msg += f"━━━━━━━━━━━━━━━━━━\n"
     if '21' in data['gold']:
-        syp_old = int(data['gold']['21']['syp'])
+        syp = data['gold']['21']['syp']
         msg += f"🔸 عيار 21:\n"
-        msg += f"  - ليرة قديمة: {syp_old:,} ل.س\n"
-        msg += f"  - ليرة جديدة: {syp_old/100:,.2f} ل.س\n"
+        msg += f"  - ليرة قديمة: {int(syp):,} ل.س\n"
+        msg += f"  - ليرة جديدة: {syp/100:,.2f} ل.س\n"
         msg += f"  - بالدولار: ${data['gold']['21']['usd']}\n"
     if '18' in data['gold']:
-        syp_old = int(data['gold']['18']['syp'])
+        syp = data['gold']['18']['syp']
         msg += f"🔸 عيار 18:\n"
-        msg += f"  - ليرة قديمة: {syp_old:,} ل.س\n"
-        msg += f"  - ليرة جديدة: {syp_old/100:,.2f} ل.س\n"
+        msg += f"  - ليرة قديمة: {int(syp):,} ل.س\n"
+        msg += f"  - ليرة جديدة: {syp/100:,.2f} ل.س\n"
         msg += f"  - بالدولار: ${data['gold']['18']['usd']}\n"
     if 'ounce' in data['gold']:
         msg += f"\n🌍 أونصة الذهب: ${data['gold']['ounce']}\n"
 
-    msg += f"\n⛽ المحروقات والطاقة:\n"
-    msg += f"━━━━━━━━━━━━━━━━━━\n"
-    fuel_names = {'gasoline': 'بنزين', 'diesel': 'مازوت', 'gas': 'غاز'}
-    for key, name in fuel_names.items():
-        if key in data['fuel']:
-            p_usd = float(data['fuel'][key])
+    # المحروقات
+    if data['fuel']:
+        msg += f"\n⛽ المحروقات والطاقة:\n"
+        msg += f"━━━━━━━━━━━━━━━━━━\n"
+        for name, p_usd in data['fuel'].items():
             p_old = int(p_usd * usd_sell)
             msg += f"🔹 سعر {name}:\n"
             msg += f"  - ليرة قديمة: {p_old:,} ل.س\n"
             msg += f"  - ليرة جديدة: {p_old/100:,.2f} ل.س\n"
             msg += f"  - بالدولار: ${p_usd:.2f}\n"
 
+    # الروابط
     msg += f"\n📢 تابعونا عبر منصاتنا:\n"
     msg += f"━━━━━━━━━━━━━━━━━━\n"
     msg += f"🔗 تلجرام: \n\n https://t.me/FarawlaShop \n\n\n"
@@ -174,30 +207,39 @@ def format_message(data):
 async def main():
     bot = Bot(token=TOKEN)
     global last_prices
-    logger.info("Bot started...")
+    logger.info("Bot started with stable architecture...")
     
     while True:
         data = get_data()
-        if data and data['currencies']:
-            current_state = {c['code']: c['sell'] for c in data['currencies']}
-            current_state['g21'] = data['gold'].get('21', {}).get('syp')
-            current_state['fuel'] = str(data['fuel'])
+        if data and (data['main_currencies'] or data['fuel']):
+            # إنشاء بصمة فريدة للحالة الحالية لمقارنتها
+            current_state = {
+                'currencies': {c['code']: c['sell'] for c in data['main_currencies']},
+                'gold_21': data['gold'].get('21', {}).get('syp'),
+                'fuel': data['fuel']
+            }
             
             if current_state != last_prices:
-                logger.info("Prices changed, sending update...")
+                logger.info("Detected price change, sending update...")
                 message = format_message(data)
                 try:
                     await bot.send_message(chat_id=CHANNEL_ID, text=message, disable_web_page_preview=True)
                     last_prices = current_state
-                    logger.info("Message sent successfully.")
+                    logger.info("Update sent successfully.")
                 except Exception as e:
                     logger.error(f"Failed to send message: {e}")
             else:
-                logger.info("No change in prices.")
+                logger.info("No significant change detected.")
         else:
-            logger.warning("Failed to fetch data or data is empty.")
+            logger.warning("Data fetch returned empty or failed.")
         
+        # الانتظار لمدة 5 دقائق قبل الفحص التالي
         await asyncio.sleep(300)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user.")
+    except Exception as e:
+        logger.critical(f"Bot crashed: {e}")
